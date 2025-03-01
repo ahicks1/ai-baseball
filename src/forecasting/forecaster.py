@@ -25,16 +25,18 @@ class PlayerForecaster:
     Class for forecasting player performance for fantasy baseball.
     """
     
-    def __init__(self, batting_data=None, pitching_data=None):
+    def __init__(self, batting_data=None, pitching_data=None, bio_data=None):
         """
         Initialize the PlayerForecaster with batting and pitching data.
         
         Args:
             batting_data (pd.DataFrame, optional): DataFrame with batting statistics
             pitching_data (pd.DataFrame, optional): DataFrame with pitching statistics
+            bio_data (pd.DataFrame, optional): DataFrame with player biographical data
         """
         self.batting_data = batting_data
         self.pitching_data = pitching_data
+        self.bio_data = bio_data
         
         # League settings for H2H categories
         self.batting_categories = ['HR', 'OBP', 'R', 'RBI', 'SB', 'TB']
@@ -43,6 +45,42 @@ class PlayerForecaster:
         # Models
         self.batting_models = {}
         self.pitching_models = {}
+    
+    def load_bio_data(self, bio_file='data/raw/biofile0.csv'):
+        """
+        Load player biographical data from CSV file.
+        
+        Args:
+            bio_file (str): Path to biographical data CSV
+        """
+        print(f"Loading biographical data from {bio_file}")
+        self.bio_data = pd.read_csv(bio_file)
+        print(f"Loaded biographical data for {len(self.bio_data)} players")
+    
+    def calculate_age(self, birthdate, season):
+        """
+        Calculate player's age as of March 1st for a given season.
+        
+        Args:
+            birthdate (str): Birthdate in YYYYMMDD format
+            season (int): Season year
+            
+        Returns:
+            int: Player's age during that season
+        """
+        if pd.isna(birthdate) or not birthdate:
+            return 28  # MLB average age for missing data
+            
+        birth_year = int(str(birthdate)[:4])
+        birth_month = int(str(birthdate)[4:6])
+        birth_day = int(str(birthdate)[6:8])
+        
+        # Calculate age as of March 1st of the season
+        age = season - birth_year
+        if birth_month > 3 or (birth_month == 3 and birth_day > 1):
+            age -= 1
+            
+        return age
     
     def load_data(self, batting_file, pitching_file):
         """
@@ -140,6 +178,23 @@ class PlayerForecaster:
         # Create a copy of the data
         df = data.copy()
         
+        # Define columns to exclude from features (non-numeric columns)
+        exclude_cols = ['TEAM', 'first', 'last']
+        
+        # Add age data if bio_data is available
+        if hasattr(self, 'bio_data') and self.bio_data is not None:
+            # Create a mapping of player_id to birthdate
+            player_birthdate = dict(zip(self.bio_data['id'], self.bio_data['birthdate']))
+            
+            # Calculate age for each player-season combination
+            df['AGE'] = df.apply(
+                lambda row: self.calculate_age(
+                    player_birthdate.get(row[player_id_col].lower(), None), 
+                    row[season_col]
+                ),
+                axis=1
+            )
+        
         # Create lagged features (previous season stats)
         players = df[player_id_col].unique()
         all_rows = []
@@ -157,28 +212,27 @@ class PlayerForecaster:
                 row = {
                     'PLAYER_ID': player,
                     'SEASON': current_season[season_col],
-                    'AGE': current_season.get('AGE', 0)
+                    'AGE': current_season.get('AGE', 28)  # Use 28 as default if missing
                 }
                 
                 # Add current season stats (these will be the targets)
                 for col in player_data.columns:
-                    if col not in [player_id_col, season_col, 'AGE']:
+                    if col not in [player_id_col, season_col, 'AGE'] and col not in exclude_cols:
                         row[col] = current_season[col]
                 
                 # Add previous season stats as features
                 for col in player_data.columns:
-                    if col not in [player_id_col, season_col, 'AGE']:
+                    if col not in [player_id_col, season_col, 'AGE'] and col not in exclude_cols:
                         row[f'PREV_{col}'] = prev_season[col]
                 
                 # Add age-related features
-                if 'AGE' in current_season:
-                    age = current_season['AGE']
-                    row['AGE_SQUARED'] = age ** 2
-                    
-                    # Age indicators for different career phases
-                    row['EARLY_CAREER'] = 1 if age < 26 else 0
-                    row['PRIME'] = 1 if 26 <= age <= 32 else 0
-                    row['DECLINE'] = 1 if age > 32 else 0
+                age = row['AGE']
+                row['AGE_SQUARED'] = age ** 2
+                
+                # Age indicators for different career phases
+                row['EARLY_CAREER'] = 1 if age < 26 else 0
+                row['PRIME'] = 1 if 26 <= age <= 32 else 0
+                row['DECLINE'] = 1 if age > 32 else 0
                 
                 all_rows.append(row)
         
@@ -199,6 +253,17 @@ class PlayerForecaster:
         """
         X = data[features]
         y = data[target]
+        
+        # Drop rows with NaN values in features or target
+        initial_sample_count = len(X)
+        combined = pd.concat([X, pd.Series(y, name='target')], axis=1)
+        combined = combined.dropna()
+        X = combined[features]
+        y = combined['target']
+        final_sample_count = len(X)
+        
+        if initial_sample_count > final_sample_count:
+            print(f"Dropped {initial_sample_count - final_sample_count} samples with NaN values ({(initial_sample_count - final_sample_count) / initial_sample_count:.2%} of data)")
         
         # Split data
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -390,11 +455,14 @@ class PlayerForecaster:
         # Get the most recent season data
         recent_data = player_data.sort_values('SEASON', ascending=False).iloc[0]
         
+        # Define columns to exclude from features (non-numeric columns)
+        exclude_cols = ['TEAM', 'first', 'last']
+        
         # Prepare features for regression models
         features = {}
         
         for col in player_data.columns:
-            if col not in ['PLAYER_ID', 'SEASON', 'AGE']:
+            if col not in ['PLAYER_ID', 'SEASON', 'AGE'] and col not in exclude_cols:
                 features[f'PREV_{col}'] = recent_data[col]
         
         if 'AGE' in recent_data:
@@ -547,6 +615,8 @@ if __name__ == "__main__":
     forecaster = PlayerForecaster()
     
     # Load data
+    forecaster.load_bio_data(bio_file='data/raw/biofile0.csv')
+    
     forecaster.load_data(
         batting_file='data/processed/batting_stats_all.csv',
         pitching_file='data/processed/pitching_stats_all.csv'

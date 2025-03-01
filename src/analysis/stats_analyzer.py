@@ -163,7 +163,8 @@ class StatsAnalyzer:
             
             # Calculate mean, std, and coefficient of variation for each category
             for category in categories:
-                values = player_data[category].values
+                # Handle blank/NaN values by filling them with 0.0
+                values = player_data[category].fillna(0.0).values
                 mean = np.mean(values)
                 std = np.std(values)
                 cv = std / mean if mean != 0 else np.nan
@@ -229,11 +230,14 @@ class StatsAnalyzer:
         results = {}
         
         for category in categories:
+            # Handle blank/NaN values by filling them with 0.0
+            category_data = data[category].fillna(0.0)
+            
             # For ERA and WHIP, lower is better
             if category in ['ERA', 'WHIP']:
-                values = -data[category].values
+                values = -category_data.values
             else:
-                values = data[category].values
+                values = category_data.values
             
             percentiles = np.percentile(values, percentile_cutoffs)
             

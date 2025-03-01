@@ -1,0 +1,4 @@
+id,last,first,bat,throw,team,g,g_p,g_sp,g_rp,g_c,g_1b,g_2b,g_3b,g_ss,g_lf,g_cf,g_rf,g_of,g_dh,g_ph,g_pr,first_g,last_g,season
+player1,Doe,John,R,R,NYY,150,0,0,0,0,150,0,0,0,0,0,0,0,0,0,0,20230401,20231001,2023
+player2,Smith,Jane,L,R,BOS,145,0,0,0,145,0,0,0,0,0,0,0,0,0,0,0,20230401,20231001,2023
+player3,Johnson,Bob,R,R,LAD,160,160,160,0,0,0,0,0,0,0,0,0,0,0,0,0,20230401,20231001,2023

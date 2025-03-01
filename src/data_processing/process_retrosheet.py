@@ -2,7 +2,7 @@
 """
 Retrosheet Data Processing Module
 
-This module handles the processing of Retrosheet play-by-play data files,
+This module handles the processing of Retrosheet CSV data files,
 converting them into player statistics for fantasy baseball analysis.
 """
 
@@ -10,141 +10,438 @@ import os
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
+from typing import Dict, List, Optional, Tuple, Union
+from unittest.mock import patch
+from src.data_processing.pitching_stats import integrate_advanced_stats
 
 
-def load_event_file(file_path):
+def load_players_file(file_path: str) -> pd.DataFrame:
     """
-    Load a Retrosheet event file (.EVN or .EVA) and parse its contents.
+    Load player information from allplayers.csv.
     
     Args:
-        file_path (str): Path to the Retrosheet event file
+        file_path (str): Path to the allplayers.csv file
         
     Returns:
-        pd.DataFrame: DataFrame containing the parsed event data
-    """
-    # This is a placeholder implementation
-    # Actual implementation would need to handle Retrosheet's specific format
-    print(f"Loading event file: {file_path}")
+        pd.DataFrame: DataFrame containing player information
     
-    # In a real implementation, we would parse the Retrosheet format
-    # For now, we'll return an empty DataFrame with expected columns
-    return pd.DataFrame(columns=[
-        'GAME_ID', 'AWAY_TEAM_ID', 'HOME_TEAM_ID', 'INNING', 
-        'BATTING_TEAM', 'OUTS', 'BALLS', 'STRIKES', 'PITCH_SEQUENCE',
-        'BATTER_ID', 'PITCHER_ID', 'EVENT_TYPE', 'EVENT_RESULT'
-    ])
-
-
-def load_roster_file(file_path):
+    Raises:
+        FileNotFoundError: If the file does not exist
     """
-    Load a Retrosheet roster file and parse its contents.
+    print(f"Loading players file: {file_path}")
+    
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Players file not found: {file_path}")
+    
+    # Load the CSV file
+    players_df = pd.read_csv(file_path)
+    
+    # Convert date columns to datetime if they exist
+    if 'first_g' in players_df.columns:
+        players_df['first_g'] = pd.to_datetime(players_df['first_g'], format='%Y%m%d', errors='coerce')
+    if 'last_g' in players_df.columns:
+        players_df['last_g'] = pd.to_datetime(players_df['last_g'], format='%Y%m%d', errors='coerce')
+    
+    return players_df
+
+
+def load_batting_file(file_path: str) -> pd.DataFrame:
+    """
+    Load batting statistics from batting.csv.
     
     Args:
-        file_path (str): Path to the Retrosheet roster file
+        file_path (str): Path to the batting.csv file
         
     Returns:
-        pd.DataFrame: DataFrame containing the parsed roster data
-    """
-    # This is a placeholder implementation
-    print(f"Loading roster file: {file_path}")
+        pd.DataFrame: DataFrame containing batting statistics
     
-    # In a real implementation, we would parse the Retrosheet format
-    return pd.DataFrame(columns=[
-        'PLAYER_ID', 'LAST_NAME', 'FIRST_NAME', 'TEAM_ID', 
-        'POSITION', 'BATS', 'THROWS'
-    ])
-
-
-def calculate_batting_stats(events_df, player_id=None):
+    Raises:
+        FileNotFoundError: If the file does not exist
     """
-    Calculate batting statistics from play-by-play events.
+    print(f"Loading batting file: {file_path}")
+    
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Batting file not found: {file_path}")
+    
+    # Load the CSV file
+    batting_df = pd.read_csv(file_path)
+    
+    # Convert date column to datetime if it exists
+    if 'date' in batting_df.columns:
+        batting_df['date'] = pd.to_datetime(batting_df['date'], format='%Y%m%d', errors='coerce')
+    
+    return batting_df
+
+
+def load_pitching_file(file_path: str) -> pd.DataFrame:
+    """
+    Load pitching statistics from pitching.csv.
     
     Args:
-        events_df (pd.DataFrame): DataFrame containing play-by-play events
-        player_id (str, optional): Filter for a specific player
+        file_path (str): Path to the pitching.csv file
         
     Returns:
-        pd.DataFrame: DataFrame with calculated batting statistics
+        pd.DataFrame: DataFrame containing pitching statistics
+    
+    Raises:
+        FileNotFoundError: If the file does not exist
     """
-    # This is a placeholder implementation
-    # In a real implementation, we would calculate actual stats from events
+    print(f"Loading pitching file: {file_path}")
     
-    if player_id:
-        print(f"Calculating batting stats for player: {player_id}")
-    else:
-        print("Calculating batting stats for all players")
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Pitching file not found: {file_path}")
     
-    # Create a sample DataFrame with fantasy-relevant batting stats
-    return pd.DataFrame({
-        'PLAYER_ID': ['player1', 'player2', 'player3'],
-        'SEASON': [2023, 2023, 2023],
-        'TEAM': ['NYY', 'LAD', 'HOU'],
-        'G': [150, 145, 160],
-        'PA': [650, 600, 700],
-        'AB': [550, 520, 600],
-        'H': [165, 150, 180],
-        'HR': [30, 25, 40],
-        'R': [95, 85, 110],
-        'RBI': [100, 90, 120],
-        'SB': [10, 20, 5],
-        'BB': [80, 60, 85],
-        'SO': [120, 100, 150],
-        'TB': [300, 250, 350],
-        'AVG': [0.300, 0.288, 0.300],
-        'OBP': [0.380, 0.350, 0.390],
-        'SLG': [0.545, 0.480, 0.583],
-        'OPS': [0.925, 0.830, 0.973]
+    # Load the CSV file
+    pitching_df = pd.read_csv(file_path)
+    
+    # Convert date column to datetime if it exists
+    if 'date' in pitching_df.columns:
+        pitching_df['date'] = pd.to_datetime(pitching_df['date'], format='%Y%m%d', errors='coerce')
+    
+    return pitching_df
+
+
+def load_fielding_file(file_path: str) -> pd.DataFrame:
+    """
+    Load fielding statistics from fielding.csv.
+    
+    Args:
+        file_path (str): Path to the fielding.csv file
+        
+    Returns:
+        pd.DataFrame: DataFrame containing fielding statistics
+    
+    Raises:
+        FileNotFoundError: If the file does not exist
+    """
+    print(f"Loading fielding file: {file_path}")
+    
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Fielding file not found: {file_path}")
+    
+    # Load the CSV file
+    fielding_df = pd.read_csv(file_path)
+    
+    # Convert date column to datetime if it exists
+    if 'date' in fielding_df.columns:
+        fielding_df['date'] = pd.to_datetime(fielding_df['date'], format='%Y%m%d', errors='coerce')
+    
+    return fielding_df
+
+
+def load_plays_file(file_path: str) -> pd.DataFrame:
+    """
+    Load play-by-play data from plays.csv.
+    
+    Args:
+        file_path (str): Path to the plays.csv file
+        
+    Returns:
+        pd.DataFrame: DataFrame containing play-by-play data
+    
+    Raises:
+        FileNotFoundError: If the file does not exist
+    """
+    print(f"Loading plays file: {file_path}")
+    
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Plays file not found: {file_path}")
+    
+    # Load the CSV file
+    plays_df = pd.read_csv(file_path)
+    
+    # Convert date column to datetime if it exists
+    if 'date' in plays_df.columns:
+        plays_df['date'] = pd.to_datetime(plays_df['date'], format='%Y%m%d', errors='coerce')
+    
+    return plays_df
+
+
+def aggregate_batting_stats(batting_df: pd.DataFrame, players_df: Optional[pd.DataFrame] = None, season: Optional[int] = None) -> pd.DataFrame:
+    """
+    Aggregate game-by-game batting stats to season totals.
+    
+    Args:
+        batting_df (pd.DataFrame): DataFrame containing batting statistics
+        players_df (pd.DataFrame, optional): DataFrame containing player information
+        season (int, optional): Filter for a specific season
+        
+    Returns:
+        pd.DataFrame: DataFrame with aggregated batting statistics
+    """
+    print("Aggregating batting statistics")
+    
+    # Filter by season if provided
+    if season is not None and 'date' in batting_df.columns:
+        batting_df = batting_df[batting_df['date'].dt.year == season]
+    
+    # Only include rows where stattype is 'value'
+    batting_df = batting_df[batting_df['stattype'] == 'value']
+    
+    # Group by player ID and team
+    grouped = batting_df.groupby(['id', 'team'])
+    
+    # Aggregate statistics
+    batting_stats = grouped.agg({
+        'b_pa': 'sum',
+        'b_ab': 'sum',
+        'b_r': 'sum',
+        'b_h': 'sum',
+        'b_d': 'sum',
+        'b_t': 'sum',
+        'b_hr': 'sum',
+        'b_rbi': 'sum',
+        'b_sh': 'sum',
+        'b_sf': 'sum',
+        'b_hbp': 'sum',
+        'b_w': 'sum',
+        'b_iw': 'sum',
+        'b_k': 'sum',
+        'b_sb': 'sum',
+        'b_cs': 'sum',
+        'b_gdp': 'sum',
+        'gid': 'count'  # Count of games
+    }).reset_index()
+    
+    # Rename columns
+    batting_stats = batting_stats.rename(columns={
+        'id': 'PLAYER_ID',
+        'team': 'TEAM',
+        'gid': 'G',
+        'b_pa': 'PA',
+        'b_ab': 'AB',
+        'b_r': 'R',
+        'b_h': 'H',
+        'b_d': 'D',
+        'b_t': 'T',
+        'b_hr': 'HR',
+        'b_rbi': 'RBI',
+        'b_sh': 'SH',
+        'b_sf': 'SF',
+        'b_hbp': 'HBP',
+        'b_w': 'BB',
+        'b_iw': 'IBB',
+        'b_k': 'SO',
+        'b_sb': 'SB',
+        'b_cs': 'CS',
+        'b_gdp': 'GDP'
     })
+    
+    # Add season column
+    if season is not None:
+        batting_stats['SEASON'] = season
+    elif 'date' in batting_df.columns:
+        # Extract year from the first date for each player
+        season_data = batting_df.groupby('id')['date'].min().dt.year
+        batting_stats['SEASON'] = batting_stats['PLAYER_ID'].map(season_data)
+    else:
+        batting_stats['SEASON'] = np.nan
+    
+    # Add player names if players_df is provided
+    if players_df is not None:
+        player_names = players_df[['id', 'first', 'last']].rename(columns={'id': 'PLAYER_ID'})
+        batting_stats = pd.merge(batting_stats, player_names, on='PLAYER_ID', how='left')
+    
+    return batting_stats
 
 
-def calculate_pitching_stats(events_df, player_id=None):
+def calculate_advanced_batting_stats(batting_stats: pd.DataFrame) -> pd.DataFrame:
     """
-    Calculate pitching statistics from play-by-play events.
+    Calculate advanced batting metrics like OBP, SLG, OPS, and TB.
     
     Args:
-        events_df (pd.DataFrame): DataFrame containing play-by-play events
-        player_id (str, optional): Filter for a specific player
+        batting_stats (pd.DataFrame): DataFrame with basic batting statistics
         
     Returns:
-        pd.DataFrame: DataFrame with calculated pitching statistics
+        pd.DataFrame: DataFrame with additional advanced statistics
     """
-    # This is a placeholder implementation
+    print("Calculating advanced batting statistics")
     
-    if player_id:
-        print(f"Calculating pitching stats for player: {player_id}")
-    else:
-        print("Calculating pitching stats for all players")
+    # Make a copy to avoid modifying the original DataFrame
+    stats = batting_stats.copy()
     
-    # Create a sample DataFrame with fantasy-relevant pitching stats
-    return pd.DataFrame({
-        'PLAYER_ID': ['pitcher1', 'pitcher2', 'pitcher3'],
-        'SEASON': [2023, 2023, 2023],
-        'TEAM': ['NYY', 'LAD', 'HOU'],
-        'G': [32, 30, 35],
-        'GS': [32, 0, 35],
-        'W': [15, 5, 18],
-        'L': [8, 3, 7],
-        'SV': [0, 30, 0],
-        'HLD': [0, 10, 0],
-        'IP': [200.0, 65.0, 210.0],
-        'H': [180, 50, 170],
-        'ER': [70, 20, 65],
-        'HR': [20, 5, 18],
-        'BB': [50, 15, 45],
-        'K': [220, 80, 240],
-        'ERA': [3.15, 2.77, 2.79],
-        'WHIP': [1.15, 1.00, 1.02],
-        'QS': [22, 0, 25]
+    # Calculate Total Bases (TB)
+    stats['TB'] = stats['H'] - stats['D'] - stats['T'] - stats['HR'] + (2 * stats['D']) + (3 * stats['T']) + (4 * stats['HR'])
+    
+    # Calculate Batting Average (AVG)
+    stats['AVG'] = stats['H'] / stats['AB']
+    
+    # Calculate On-Base Percentage (OBP)
+    # OBP = (H + BB + HBP) / (AB + BB + HBP + SF)
+    stats['OBP'] = (stats['H'] + stats['BB'] + stats['HBP']) / (stats['AB'] + stats['BB'] + stats['HBP'] + stats['SF'])
+    
+    # Calculate Slugging Percentage (SLG)
+    stats['SLG'] = stats['TB'] / stats['AB']
+    
+    # Calculate On-Base Plus Slugging (OPS)
+    stats['OPS'] = stats['OBP'] + stats['SLG']
+    
+    # Handle division by zero
+    stats.replace([np.inf, -np.inf], np.nan, inplace=True)
+    
+    return stats
+
+
+def aggregate_pitching_stats(pitching_df: pd.DataFrame, players_df: Optional[pd.DataFrame] = None, season: Optional[int] = None) -> pd.DataFrame:
+    """
+    Aggregate game-by-game pitching stats to season totals.
+    
+    Args:
+        pitching_df (pd.DataFrame): DataFrame containing pitching statistics
+        players_df (pd.DataFrame, optional): DataFrame containing player information
+        season (int, optional): Filter for a specific season
+        
+    Returns:
+        pd.DataFrame: DataFrame with aggregated pitching statistics
+    """
+    print("Aggregating pitching statistics")
+    
+    # Filter by season if provided
+    if season is not None and 'date' in pitching_df.columns:
+        pitching_df = pitching_df[pitching_df['date'].dt.year == season]
+    
+    # Only include rows where stattype is 'value'
+    pitching_df = pitching_df[pitching_df['stattype'] == 'value']
+    
+    # Group by player ID and team
+    grouped = pitching_df.groupby(['id', 'team'])
+    
+    # Aggregate statistics
+    pitching_stats = grouped.agg({
+        'p_ipouts': 'sum',
+        'p_bfp': 'sum',
+        'p_h': 'sum',
+        'p_d': 'sum',
+        'p_t': 'sum',
+        'p_hr': 'sum',
+        'p_r': 'sum',
+        'p_er': 'sum',
+        'p_w': 'sum',
+        'p_iw': 'sum',
+        'p_k': 'sum',
+        'p_hbp': 'sum',
+        'p_wp': 'sum',
+        'p_bk': 'sum',
+        'p_gs': 'sum',
+        'p_gf': 'sum',
+        'p_cg': 'sum',
+        'wp': 'sum',
+        'lp': 'sum',
+        'save': 'sum',
+        'gid': 'count'  # Count of games
+    }).reset_index()
+    
+    # Rename columns
+    pitching_stats = pitching_stats.rename(columns={
+        'id': 'PLAYER_ID',
+        'team': 'TEAM',
+        'gid': 'G',
+        'p_gs': 'GS',
+        'p_gf': 'GF',
+        'p_cg': 'CG',
+        'wp': 'W',
+        'lp': 'L',
+        'save': 'SV',
+        'p_ipouts': 'IPouts',
+        'p_bfp': 'BFP',
+        'p_h': 'H',
+        'p_d': 'D',
+        'p_t': 'T',
+        'p_hr': 'HR',
+        'p_r': 'R',
+        'p_er': 'ER',
+        'p_w': 'BB',
+        'p_iw': 'IBB',
+        'p_k': 'K',
+        'p_hbp': 'HBP',
+        'p_wp': 'WP',
+        'p_bk': 'BK'
     })
+    
+    # Add season column
+    if season is not None:
+        pitching_stats['SEASON'] = season
+    elif 'date' in pitching_df.columns:
+        # Extract year from the first date for each player
+        season_data = pitching_df.groupby('id')['date'].min().dt.year
+        pitching_stats['SEASON'] = pitching_stats['PLAYER_ID'].map(season_data)
+    else:
+        pitching_stats['SEASON'] = np.nan
+    
+    # Add player names if players_df is provided
+    if players_df is not None:
+        player_names = players_df[['id', 'first', 'last']].rename(columns={'id': 'PLAYER_ID'})
+        pitching_stats = pd.merge(pitching_stats, player_names, on='PLAYER_ID', how='left')
+    
+    return pitching_stats
 
 
-def process_season_data(season, data_dir='data/raw', output_dir='data/processed'):
+def calculate_advanced_pitching_stats(pitching_stats: pd.DataFrame, plays_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
     """
-    Process all data for a given MLB season.
+    Calculate advanced pitching metrics like ERA, WHIP, and fantasy-relevant stats.
+    
+    Args:
+        pitching_stats (pd.DataFrame): DataFrame with basic pitching statistics
+        plays_df (pd.DataFrame, optional): DataFrame with play-by-play data for calculating holds and quality starts
+        
+    Returns:
+        pd.DataFrame: DataFrame with additional advanced statistics
+    """
+    print("Calculating advanced pitching statistics")
+    
+    # Make a copy to avoid modifying the original DataFrame
+    stats = pitching_stats.copy()
+    
+    # Calculate Innings Pitched (IP)
+    stats['IP'] = stats['IPouts'] / 3
+    
+    # Calculate Earned Run Average (ERA)
+    # ERA = (ER * 9) / IP
+    stats['ERA'] = (stats['ER'] * 9) / stats['IP']
+    
+    # Calculate Walks plus Hits per Inning Pitched (WHIP)
+    # WHIP = (BB + H) / IP
+    stats['WHIP'] = (stats['BB'] + stats['H']) / stats['IP']
+    
+    # Calculate Quality Starts (QS) and Holds (HLD)
+    if plays_df is not None:
+        # Use the specialized module to calculate QS and HLD from play-by-play data
+        stats = integrate_advanced_stats(stats, plays_df)
+    else:
+        # If play-by-play data is not available, use estimates
+        # Estimate QS based on overall performance
+        stats['QS'] = np.floor(stats['GS'] * 0.65)  # Rough estimate: 65% of starts are quality starts
+        # Set HLD to 0 as we can't estimate without play-by-play data
+        stats['HLD'] = 0
+        # Calculate combined fantasy stats
+        stats['SV+HLD'] = stats['SV'] + stats['HLD']
+        stats['W+QS'] = stats['W'] + stats['QS']
+    
+    # Handle division by zero
+    stats.replace([np.inf, -np.inf], np.nan, inplace=True)
+    
+    return stats
+
+
+def process_season_data_with_dataframes(
+    season: int, 
+    players_df: pd.DataFrame, 
+    batting_df: pd.DataFrame, 
+    pitching_df: pd.DataFrame, 
+    fielding_df: Optional[pd.DataFrame] = None, 
+    plays_df: Optional[pd.DataFrame] = None, 
+    output_dir: str = 'data/processed'
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Process data for a given MLB season using pre-loaded DataFrames.
     
     Args:
         season (int): The MLB season year to process
-        data_dir (str): Directory containing raw Retrosheet data
+        players_df (pd.DataFrame): DataFrame containing player information
+        batting_df (pd.DataFrame): DataFrame containing batting statistics
+        pitching_df (pd.DataFrame): DataFrame containing pitching statistics
+        fielding_df (pd.DataFrame, optional): DataFrame containing fielding statistics
+        plays_df (pd.DataFrame, optional): DataFrame containing play-by-play data
         output_dir (str): Directory to save processed data
         
     Returns:
@@ -152,15 +449,17 @@ def process_season_data(season, data_dir='data/raw', output_dir='data/processed'
     """
     print(f"Processing data for {season} season")
     
-    # In a real implementation, we would:
-    # 1. Find all event files for the season
-    # 2. Load and parse each file
-    # 3. Combine the data
-    # 4. Calculate statistics
+    # Process batting statistics
+    batting_stats = aggregate_batting_stats(batting_df, players_df, season)
+    batting_stats = calculate_advanced_batting_stats(batting_stats)
     
-    # For now, we'll create sample data
-    batting_stats = calculate_batting_stats(None)
-    pitching_stats = calculate_pitching_stats(None)
+    # Process pitching statistics
+    pitching_stats = aggregate_pitching_stats(pitching_df, players_df, season)
+    pitching_stats = calculate_advanced_pitching_stats(pitching_stats, plays_df)
+    
+    # Remove duplicate rows
+    batting_stats = batting_stats.drop_duplicates()
+    pitching_stats = pitching_stats.drop_duplicates()
     
     # Ensure output directory exists
     os.makedirs(output_dir, exist_ok=True)
@@ -178,7 +477,56 @@ def process_season_data(season, data_dir='data/raw', output_dir='data/processed'
     return batting_stats, pitching_stats
 
 
-def process_multiple_seasons(start_year, end_year, data_dir='data/raw', output_dir='data/processed'):
+def process_season_data(season: int, data_dir: str = 'data/raw', output_dir: str = 'data/processed') -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Process all data for a given MLB season.
+    
+    Args:
+        season (int): The MLB season year to process
+        data_dir (str): Directory containing raw Retrosheet data
+        output_dir (str): Directory to save processed data
+        
+    Returns:
+        tuple: (batting_stats_df, pitching_stats_df)
+    """
+    # Define file paths
+    players_file = os.path.join(data_dir, 'allplayers.csv')
+    batting_file = os.path.join(data_dir, 'batting.csv')
+    pitching_file = os.path.join(data_dir, 'pitching.csv')
+    fielding_file = os.path.join(data_dir, 'fielding.csv')
+    plays_file = os.path.join(data_dir, 'plays.csv')
+    
+    # Load data files
+    try:
+        players_df = load_players_file(players_file)
+        batting_df = load_batting_file(batting_file)
+        pitching_df = load_pitching_file(pitching_file)
+        
+        # Optional files - we'll try to load them but continue if they don't exist
+        try:
+            fielding_df = load_fielding_file(fielding_file)
+        except FileNotFoundError:
+            fielding_df = None
+            print(f"Warning: Fielding file not found: {fielding_file}")
+        
+        try:
+            plays_df = load_plays_file(plays_file)
+        except FileNotFoundError:
+            plays_df = None
+            print(f"Warning: Plays file not found: {plays_file}")
+        
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        # Return empty DataFrames if files are not found
+        return pd.DataFrame(), pd.DataFrame()
+    
+    # Use the new function that accepts DataFrames
+    return process_season_data_with_dataframes(
+        season, players_df, batting_df, pitching_df, fielding_df, plays_df, output_dir
+    )
+
+
+def process_multiple_seasons(start_year: int, end_year: int, data_dir: str = 'data/raw', output_dir: str = 'data/processed') -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Process data for multiple MLB seasons.
     
@@ -194,18 +542,113 @@ def process_multiple_seasons(start_year, end_year, data_dir='data/raw', output_d
     all_batting = []
     all_pitching = []
     
+    # Define file paths
+    players_file = os.path.join(data_dir, 'allplayers.csv')
+    batting_file = os.path.join(data_dir, 'batting.csv')
+    pitching_file = os.path.join(data_dir, 'pitching.csv')
+    fielding_file = os.path.join(data_dir, 'fielding.csv')
+    plays_file = os.path.join(data_dir, 'plays.csv')
+    
+    # Load data files once
+    try:
+        print("Loading data files once for all seasons...")
+        players_df = load_players_file(players_file)
+        batting_df = load_batting_file(batting_file)
+        pitching_df = load_pitching_file(pitching_file)
+        
+        # Optional files - we'll try to load them but continue if they don't exist
+        try:
+            fielding_df = load_fielding_file(fielding_file)
+        except FileNotFoundError:
+            fielding_df = None
+            print(f"Warning: Fielding file not found: {fielding_file}")
+        
+        try:
+            plays_df = load_plays_file(plays_file)
+        except FileNotFoundError:
+            plays_df = None
+            print(f"Warning: Plays file not found: {plays_file}")
+        
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        # Return empty DataFrames if files are not found
+        return pd.DataFrame(), pd.DataFrame()
+    
+    # Filter data by year range immediately after loading to avoid processing unnecessary data
+    print(f"Filtering data for years {start_year} to {end_year}...")
+    
+    if 'date' in batting_df.columns:
+        batting_df = batting_df[
+            (batting_df['date'].dt.year >= start_year) & 
+            (batting_df['date'].dt.year <= end_year)
+        ]
+        print(f"Filtered batting data: {batting_df.shape[0]} rows")
+    
+    if 'date' in pitching_df.columns:
+        pitching_df = pitching_df[
+            (pitching_df['date'].dt.year >= start_year) & 
+            (pitching_df['date'].dt.year <= end_year)
+        ]
+        print(f"Filtered pitching data: {pitching_df.shape[0]} rows")
+    
+    if fielding_df is not None and 'date' in fielding_df.columns:
+        fielding_df = fielding_df[
+            (fielding_df['date'].dt.year >= start_year) & 
+            (fielding_df['date'].dt.year <= end_year)
+        ]
+        print(f"Filtered fielding data: {fielding_df.shape[0]} rows")
+    
+    if plays_df is not None and 'date' in plays_df.columns:
+        plays_df = plays_df[
+            (plays_df['date'].dt.year >= start_year) & 
+            (plays_df['date'].dt.year <= end_year)
+        ]
+        print(f"Filtered plays data: {plays_df.shape[0]} rows")
+    
+    # Process each year with the filtered data
     for year in tqdm(range(start_year, end_year + 1), desc="Processing seasons"):
-        batting, pitching = process_season_data(year, data_dir, output_dir)
-        all_batting.append(batting)
-        all_pitching.append(pitching)
+        # Filter the already-filtered data for just this year
+        year_batting_df = batting_df.copy() if batting_df.empty else batting_df[batting_df['date'].dt.year == year].copy()
+        year_pitching_df = pitching_df.copy() if pitching_df.empty else pitching_df[pitching_df['date'].dt.year == year].copy()
+        
+        year_fielding_df = None
+        if fielding_df is not None and not fielding_df.empty:
+            year_fielding_df = fielding_df[fielding_df['date'].dt.year == year].copy()
+        
+        year_plays_df = None
+        if plays_df is not None and not plays_df.empty:
+            year_plays_df = plays_df[plays_df['date'].dt.year == year].copy()
+        
+        # Process this year's data directly with the dataframes
+        batting_stats, pitching_stats = process_season_data_with_dataframes(
+            year, players_df, year_batting_df, year_pitching_df, 
+            year_fielding_df, year_plays_df, output_dir
+        )
+        
+        # Only append if data was successfully processed
+        if not batting_stats.empty:
+            all_batting.append(batting_stats)
+        if not pitching_stats.empty:
+            all_pitching.append(pitching_stats)
     
-    # Combine all seasons
-    combined_batting = pd.concat(all_batting, ignore_index=True)
-    combined_pitching = pd.concat(all_pitching, ignore_index=True)
+    # Combine all seasons if we have data
+    if all_batting:
+        combined_batting = pd.concat(all_batting, ignore_index=True)
+        # Remove duplicate rows in the combined file
+        combined_batting = combined_batting.drop_duplicates()
+        combined_batting.to_csv(os.path.join(output_dir, 'batting_stats_all.csv'), index=False)
+    else:
+        combined_batting = pd.DataFrame()
+        print("Warning: No batting data was processed")
     
-    # Save combined data
-    combined_batting.to_csv(os.path.join(output_dir, 'batting_stats_all.csv'), index=False)
-    combined_pitching.to_csv(os.path.join(output_dir, 'pitching_stats_all.csv'), index=False)
+    if all_pitching:
+        combined_pitching = pd.concat(all_pitching, ignore_index=True)
+        # Remove duplicate rows in the combined file
+        combined_pitching = combined_pitching.drop_duplicates()
+        combined_pitching.to_csv(os.path.join(output_dir, 'pitching_stats_all.csv'), index=False)
+    else:
+        combined_pitching = pd.DataFrame()
+        print("Warning: No pitching data was processed")
     
     return combined_batting, combined_pitching
 
@@ -216,8 +659,8 @@ if __name__ == "__main__":
     print("=========================")
     
     # Process the last 10 seasons
-    current_year = 2024  # Update this to the current year
-    start_year = current_year - 10
+    current_year = 2025  # Update this to the current year
+    start_year = current_year - 25
     
     print(f"Processing data from {start_year} to {current_year-1}")
     

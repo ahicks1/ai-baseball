@@ -42,9 +42,29 @@ fantasy-baseball-draft-tool/
 1. Clone this repository
 2. Install dependencies: `pip install -r requirements.txt`
 3. Download Retrosheet data to the `data/raw/` directory
-4. Run data processing: `python src/data_processing/process_retrosheet.py`
-5. Generate projections: `python src/forecasting/generate_projections.py`
-6. Start draft tool: `python src/draft_tool/cli.py`
+4. Process the data: `python -m src.draft_tool.cli process-data`
+5. Analyze statistics: `python -m src.draft_tool.cli analyze-stats`
+6. Train models: `python -m src.draft_tool.cli train-models`
+7. Generate forecasts: `python -m src.draft_tool.cli generate-forecasts`
+8. Rank players: `python -m src.draft_tool.cli rank-players`
+9. Start draft simulation: `python -m src.draft_tool.cli draft`
+
+Alternatively, you can run the entire pipeline with a single command:
+```
+python -m src.draft_tool.cli run-pipeline
+```
+
+## CLI Commands
+
+The fantasy baseball draft tool provides several commands:
+
+- `process-data`: Process Retrosheet data into player statistics
+- `analyze-stats`: Analyze player statistics
+- `train-models`: Train forecasting models for player performance
+- `generate-forecasts`: Generate player forecasts using trained models
+- `rank-players`: Rank players based on projected fantasy value
+- `draft`: Run a fantasy baseball draft simulation
+- `run-pipeline`: Run the complete fantasy baseball analysis pipeline
 
 ## Data Sources
 

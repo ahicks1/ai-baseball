@@ -15,6 +15,32 @@ from unittest.mock import patch
 from src.data_processing.pitching_stats import integrate_advanced_stats
 
 
+def calculate_age(birthdate, season):
+    """
+    Calculate player's age as of March 1st for a given season.
+    
+    Args:
+        birthdate (str): Birthdate in YYYYMMDD format
+        season (int): Season year
+        
+    Returns:
+        int: Player's age during that season
+    """
+    if pd.isna(birthdate) or not birthdate:
+        return 28  # MLB average age for missing data
+        
+    birth_year = int(str(birthdate)[:4])
+    birth_month = int(str(birthdate)[4:6])
+    birth_day = int(str(birthdate)[6:8])
+    
+    # Calculate age as of March 1st of the season
+    age = season - birth_year
+    if birth_month > 3 or (birth_month == 3 and birth_day > 1):
+        age -= 1
+        
+    return age
+
+
 def load_players_file(file_path: str) -> pd.DataFrame:
     """
     Load player information from allplayers.csv.
@@ -157,6 +183,75 @@ def load_plays_file(file_path: str) -> pd.DataFrame:
     return plays_df
 
 
+def load_plays_file_chunked(file_path: str, start_year: Optional[int] = None, end_year: Optional[int] = None, chunksize: int = 500000) -> pd.DataFrame:
+    """
+    Load play-by-play data from plays.csv in chunks to reduce memory usage.
+    
+    Args:
+        file_path (str): Path to the plays.csv file
+        start_year (int, optional): Start year for filtering data
+        end_year (int, optional): End year for filtering data
+        chunksize (int): Number of rows to read at a time
+        
+    Returns:
+        pd.DataFrame: DataFrame containing filtered play-by-play data
+    
+    Raises:
+        FileNotFoundError: If the file does not exist
+    """
+    print(f"Loading plays file in chunks: {file_path}")
+    
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Plays file not found: {file_path}")
+    
+    import gc  # Import garbage collector for memory management
+    
+    filtered_chunks = []
+    total_rows_processed = 0
+    total_rows_kept = 0
+    
+    # Read the file in chunks
+    for chunk_num, chunk in enumerate(pd.read_csv(file_path, chunksize=chunksize)):
+        total_rows_processed += len(chunk)
+        
+        # Convert date column to datetime if it exists
+        if 'date' in chunk.columns:
+            chunk['date'] = pd.to_datetime(chunk['date'], format='%Y%m%d', errors='coerce')
+            
+            # Filter by date range if specified
+            if start_year is not None or end_year is not None:
+                if start_year is not None:
+                    chunk = chunk[chunk['date'].dt.year >= start_year]
+                if end_year is not None:
+                    chunk = chunk[chunk['date'].dt.year <= end_year]
+        
+        # Only keep the chunk if it has data after filtering
+        if not chunk.empty:
+            filtered_chunks.append(chunk)
+            total_rows_kept += len(chunk)
+        
+        # Print progress
+        if (chunk_num + 1) % 10 == 0:
+            print(f"Processed {chunk_num + 1} chunks ({total_rows_processed:,} rows), kept {total_rows_kept:,} rows")
+            
+        # Force garbage collection after processing each chunk to free memory
+        gc.collect()
+    
+    # Combine all filtered chunks
+    if filtered_chunks:
+        print(f"Combining {len(filtered_chunks)} filtered chunks with {total_rows_kept:,} total rows")
+        plays_df = pd.concat(filtered_chunks, ignore_index=True)
+        
+        # Force garbage collection after concatenation
+        gc.collect()
+        
+        print(f"Final plays DataFrame shape: {plays_df.shape}")
+        return plays_df
+    else:
+        print("No data matched the filter criteria")
+        return pd.DataFrame()
+
+
 def aggregate_batting_stats(batting_df: pd.DataFrame, players_df: Optional[pd.DataFrame] = None, season: Optional[int] = None) -> pd.DataFrame:
     """
     Aggregate game-by-game batting stats to season totals.
@@ -241,6 +336,20 @@ def aggregate_batting_stats(batting_df: pd.DataFrame, players_df: Optional[pd.Da
     if players_df is not None:
         player_names = players_df[['id', 'first', 'last']].rename(columns={'id': 'PLAYER_ID'})
         batting_stats = pd.merge(batting_stats, player_names, on='PLAYER_ID', how='left')
+        
+        # Add age data if players_df has birthdate information
+        if 'birthdate' in players_df.columns:
+            # Create a mapping of player_id to birthdate
+            player_birthdate = dict(zip(players_df['id'], players_df['birthdate']))
+            
+            # Calculate age for each player based on the season
+            batting_stats['AGE'] = batting_stats.apply(
+                lambda row: calculate_age(
+                    player_birthdate.get(row['PLAYER_ID'].lower(), None), 
+                    row['SEASON']
+                ),
+                axis=1
+            )
     
     return batting_stats
 
@@ -372,6 +481,20 @@ def aggregate_pitching_stats(pitching_df: pd.DataFrame, players_df: Optional[pd.
     if players_df is not None:
         player_names = players_df[['id', 'first', 'last']].rename(columns={'id': 'PLAYER_ID'})
         pitching_stats = pd.merge(pitching_stats, player_names, on='PLAYER_ID', how='left')
+        
+        # Add age data if players_df has birthdate information
+        if 'birthdate' in players_df.columns:
+            # Create a mapping of player_id to birthdate
+            player_birthdate = dict(zip(players_df['id'], players_df['birthdate']))
+            
+            # Calculate age for each player based on the season
+            pitching_stats['AGE'] = pitching_stats.apply(
+                lambda row: calculate_age(
+                    player_birthdate.get(row['PLAYER_ID'].lower(), None), 
+                    row['SEASON']
+                ),
+                axis=1
+            )
     
     return pitching_stats
 
@@ -509,8 +632,10 @@ def process_season_data(season: int, data_dir: str = 'data/raw', output_dir: str
             fielding_df = None
             print(f"Warning: Fielding file not found: {fielding_file}")
         
+        # Load plays file in chunks with date filtering to reduce memory usage
         try:
-            plays_df = load_plays_file(plays_file)
+            print(f"Loading plays file in chunks with date filtering for {season}...")
+            plays_df = load_plays_file_chunked(plays_file, season, season)
         except FileNotFoundError:
             plays_df = None
             print(f"Warning: Plays file not found: {plays_file}")
@@ -563,8 +688,10 @@ def process_multiple_seasons(start_year: int, end_year: int, data_dir: str = 'da
             fielding_df = None
             print(f"Warning: Fielding file not found: {fielding_file}")
         
+        # Load plays file in chunks with date filtering to reduce memory usage
         try:
-            plays_df = load_plays_file(plays_file)
+            print(f"Loading plays file in chunks with date filtering ({start_year}-{end_year})...")
+            plays_df = load_plays_file_chunked(plays_file, start_year, end_year)
         except FileNotFoundError:
             plays_df = None
             print(f"Warning: Plays file not found: {plays_file}")
@@ -598,15 +725,14 @@ def process_multiple_seasons(start_year: int, end_year: int, data_dir: str = 'da
         ]
         print(f"Filtered fielding data: {fielding_df.shape[0]} rows")
     
-    if plays_df is not None and 'date' in plays_df.columns:
-        plays_df = plays_df[
-            (plays_df['date'].dt.year >= start_year) & 
-            (plays_df['date'].dt.year <= end_year)
-        ]
-        print(f"Filtered plays data: {plays_df.shape[0]} rows")
+    # Note: plays_df is already filtered by date range in load_plays_file_chunked
+    
+    import gc  # Import garbage collector for memory management
     
     # Process each year with the filtered data
     for year in tqdm(range(start_year, end_year + 1), desc="Processing seasons"):
+        print(f"\nProcessing year {year}...")
+        
         # Filter the already-filtered data for just this year
         year_batting_df = batting_df.copy() if batting_df.empty else batting_df[batting_df['date'].dt.year == year].copy()
         year_pitching_df = pitching_df.copy() if pitching_df.empty else pitching_df[pitching_df['date'].dt.year == year].copy()
@@ -615,15 +741,34 @@ def process_multiple_seasons(start_year: int, end_year: int, data_dir: str = 'da
         if fielding_df is not None and not fielding_df.empty:
             year_fielding_df = fielding_df[fielding_df['date'].dt.year == year].copy()
         
+        # For plays data, we have two options:
+        # 1. If we loaded all plays data at once, filter it for this year
+        # 2. If the plays data is too large, load just this year's data in chunks
         year_plays_df = None
         if plays_df is not None and not plays_df.empty:
+            # Option 1: Filter from already loaded data
+            print(f"Filtering plays data for {year}...")
             year_plays_df = plays_df[plays_df['date'].dt.year == year].copy()
+            print(f"Filtered plays data for {year}: {year_plays_df.shape[0]} rows")
+        else:
+            # Option 2: Load just this year's data in chunks
+            # This is a fallback in case we couldn't load all plays data at once
+            try:
+                print(f"Loading plays data for {year} in chunks...")
+                year_plays_df = load_plays_file_chunked(plays_file, year, year)
+            except Exception as e:
+                print(f"Error loading plays data for {year}: {e}")
+                year_plays_df = None
         
         # Process this year's data directly with the dataframes
         batting_stats, pitching_stats = process_season_data_with_dataframes(
             year, players_df, year_batting_df, year_pitching_df, 
             year_fielding_df, year_plays_df, output_dir
         )
+        
+        # Clean up year-specific dataframes to free memory
+        del year_batting_df, year_pitching_df, year_fielding_df, year_plays_df
+        gc.collect()
         
         # Only append if data was successfully processed
         if not batting_stats.empty:
@@ -658,9 +803,9 @@ if __name__ == "__main__":
     print("Retrosheet Data Processing")
     print("=========================")
     
-    # Process the last 10 seasons
+    # Process the last 30 seasons
     current_year = 2025  # Update this to the current year
-    start_year = current_year - 25
+    start_year = current_year - 30
     
     print(f"Processing data from {start_year} to {current_year-1}")
     

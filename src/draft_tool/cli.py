@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 
 from src.data_processing.process_retrosheet import process_multiple_seasons
 from src.analysis.stats_analyzer import StatsAnalyzer
-from src.forecasting.forecaster import PlayerForecaster
+from src.forecasting import PlayerForecaster
 from src.ranking.player_ranker import PlayerRanker
 
 
@@ -612,12 +612,13 @@ def analyze_stats(batting_file, pitching_file, output_dir):
 @cli.command()
 @click.option('--batting-file', default='data/processed/batting_stats_all.csv', help='Path to batting statistics CSV')
 @click.option('--pitching-file', default='data/processed/pitching_stats_all.csv', help='Path to pitching statistics CSV')
-@click.option('--output-dir', default='data/projections', help='Directory to save projections')
-@click.option('--load-models', is_flag=True, help='Load existing models instead of training new ones')
-@click.option('--models-dir', default='data/models', help='Directory containing saved models (when using --load-models)')
-def generate_projections(batting_file, pitching_file, output_dir, load_models, models_dir):
-    """Generate player projections for the upcoming season"""
-    click.echo("Generating player projections")
+@click.option('--bio-file', default='data/raw/biofile0.csv', help='Path to player biographical data CSV (optional)')
+@click.option('--models-dir', default='data/models', help='Directory to save trained models')
+@click.option('--model-type', default='ensemble', help='Type of model to train (ensemble, ridge, random_forest, gradient_boosting)')
+@click.option('--n-jobs', type=int, default=8, help='Number of parallel jobs to run')
+def train_models(batting_file, pitching_file, bio_file, models_dir, model_type, n_jobs):
+    """Train forecasting models for player performance"""
+    click.echo("Training player forecasting models")
     
     # Check if input files exist
     if not os.path.exists(batting_file):
@@ -628,36 +629,83 @@ def generate_projections(batting_file, pitching_file, output_dir, load_models, m
         click.echo(f"Error: Pitching statistics file not found: {pitching_file}")
         return
     
-    # Check if models directory exists when using --load-models
-    if load_models and not os.path.exists(models_dir):
-        click.echo(f"Error: Models directory not found: {models_dir}")
-        click.echo("Please train models first or specify a different models directory.")
-        return
+    # Create models directory if it doesn't exist
+    os.makedirs(models_dir, exist_ok=True)
     
     # Initialize forecaster
-    forecaster = PlayerForecaster(load_existing_models=load_models)
+    forecaster = PlayerForecaster()
     
     # Load data
     forecaster.load_data(batting_file, pitching_file)
     
-    if load_models:
-        click.echo(f"\nLoading existing models from {models_dir}...")
-        if not forecaster.load_models(models_dir):
-            click.echo("Failed to load some models. Training may be required.")
-    else:
-        # Train models
-        click.echo("\nTraining batting models...")
-        forecaster.train_batting_models()
-        
-        click.echo("\nTraining pitching models...")
-        forecaster.train_pitching_models()
+    # Load biographical data if file exists
+    if bio_file and os.path.exists(bio_file):
+        forecaster.load_bio_data(bio_file)
+    
+    # Train models
+    click.echo("\nTraining batting models...")
+    forecaster.train_batting_models(model_type=model_type, n_jobs=n_jobs)
+    
+    click.echo("\nTraining pitching models...")
+    forecaster.train_pitching_models(model_type=model_type, n_jobs=n_jobs)
+    
+    click.echo("\nModel training complete!")
+    click.echo(f"Models saved to {models_dir}")
+
+
+@cli.command()
+@click.option('--batting-file', default='data/processed/batting_stats_all.csv', help='Path to batting statistics CSV')
+@click.option('--pitching-file', default='data/processed/pitching_stats_all.csv', help='Path to pitching statistics CSV')
+@click.option('--bio-file', default='data/raw/biofile0.csv', help='Path to player biographical data CSV (optional)')
+@click.option('--models-dir', default='data/models', help='Directory containing saved models')
+@click.option('--output-dir', default='data/projections', help='Directory to save projections')
+@click.option('--n-jobs', type=int, default=8, help='Number of parallel jobs to run')
+@click.option('--forecast-season', type=int, default=None, help='Season to forecast (default: most recent season + 1)')
+def generate_forecasts(batting_file, pitching_file, bio_file, models_dir, output_dir, n_jobs, forecast_season):
+    """Generate player forecasts using trained models"""
+    click.echo("Generating player forecasts")
+    
+    # Check if input files exist
+    if not os.path.exists(batting_file):
+        click.echo(f"Error: Batting statistics file not found: {batting_file}")
+        return
+    
+    if not os.path.exists(pitching_file):
+        click.echo(f"Error: Pitching statistics file not found: {pitching_file}")
+        return
+    
+    # Check if models directory exists
+    if not os.path.exists(models_dir):
+        click.echo(f"Error: Models directory not found: {models_dir}")
+        click.echo("Please train models first or specify a different models directory.")
+        return
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Initialize forecaster with existing models
+    forecaster = PlayerForecaster(load_existing_models=True)
+    
+    # Load data
+    forecaster.load_data(batting_file, pitching_file)
+    
+    # Load biographical data if file exists
+    if bio_file and os.path.exists(bio_file):
+        forecaster.load_bio_data(bio_file)
+    
+    # Load models
+    click.echo(f"\nLoading models from {models_dir}...")
+    if not forecaster.load_models(models_dir):
+        click.echo("Failed to load some models. Training may be required.")
+        return
     
     # Generate forecasts
     click.echo("\nGenerating forecasts...")
-    batting_forecasts, pitching_forecasts = forecaster.generate_all_forecasts(output_dir)
+    batting_forecasts, pitching_forecasts = forecaster.generate_all_forecasts(output_dir, n_jobs=n_jobs, forecast_season=forecast_season)
     
     click.echo("\nForecasting complete!")
     click.echo(f"Generated forecasts for {len(batting_forecasts)} batters and {len(pitching_forecasts)} pitchers")
+    click.echo(f"Forecasts saved to {output_dir}")
 
 
 @cli.command()
@@ -731,9 +779,109 @@ def draft(rankings_file, teams, roster_size, output_dir):
 
 
 @cli.command()
+@click.option('--player-id', type=str, help='Player ID to visualize')
+@click.option('--category', type=str, help='Statistical category to visualize')
+@click.option('--is-pitcher', is_flag=True, help='Whether the player is a pitcher')
+@click.option('--output-dir', default='data/visualizations', help='Directory to save visualizations')
+@click.option('--historical-batting', default='data/processed/batting_stats_all.csv', 
+              help='Path to historical batting statistics CSV')
+@click.option('--historical-pitching', default='data/processed/pitching_stats_all.csv', 
+              help='Path to historical pitching statistics CSV')
+@click.option('--forecast-batting', default='data/projections/batting_forecasts.csv', 
+              help='Path to batting forecasts CSV')
+@click.option('--forecast-pitching', default='data/projections/pitching_forecasts.csv', 
+              help='Path to pitching forecasts CSV')
+@click.option('--top-n', type=int, default=5, help='Number of top players to visualize')
+@click.option('--all-categories', is_flag=True, help='Visualize all categories')
+def visualize_models(player_id, category, is_pitcher, output_dir, historical_batting, historical_pitching, 
+                    forecast_batting, forecast_pitching, top_n, all_categories):
+    """Visualize model performance and forecasts"""
+    click.echo("Visualizing model performance")
+    
+    # Check if input files exist
+    if not os.path.exists(historical_batting):
+        click.echo(f"Error: Historical batting file not found: {historical_batting}")
+        return
+    
+    if not os.path.exists(historical_pitching):
+        click.echo(f"Error: Historical pitching file not found: {historical_pitching}")
+        return
+    
+    # Check if forecast files exist
+    if not os.path.exists(forecast_batting):
+        click.echo(f"Warning: Forecast batting file not found: {forecast_batting}")
+        click.echo("Will proceed without forecast data.")
+        forecast_batting = None
+    
+    if not os.path.exists(forecast_pitching):
+        click.echo(f"Warning: Forecast pitching file not found: {forecast_pitching}")
+        click.echo("Will proceed without forecast data.")
+        forecast_pitching = None
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Import the visualizer
+    from src.analysis.model_visualizer import ModelVisualizer
+    
+    # Initialize visualizer
+    visualizer = ModelVisualizer()
+    
+    # Load data
+    click.echo("Loading data...")
+    visualizer.load_data(
+        historical_batting_file=historical_batting,
+        historical_pitching_file=historical_pitching,
+        forecast_batting_file=forecast_batting,
+        forecast_pitching_file=forecast_pitching
+    )
+    
+    # If player ID and category are specified, visualize that player
+    if player_id and category:
+        click.echo(f"Visualizing {category} for player {player_id}...")
+        visualizer.run_model_comparison(
+            player_id, category, is_pitcher, output_dir
+        )
+    # Otherwise, visualize top players for each category
+    else:
+        # Get categories based on player type
+        if is_pitcher:
+            categories = visualizer.pitching_categories
+            data = visualizer.historical_pitching
+        else:
+            categories = visualizer.batting_categories
+            data = visualizer.historical_batting
+        
+        # If all_categories is False, just use the first category
+        if not all_categories:
+            categories = [categories[0]]
+        
+        # For each category, visualize top players
+        for category in categories:
+            click.echo(f"Visualizing {category} for top {top_n} players...")
+            
+            # Get top players by category value
+            player_stats = data.groupby('PLAYER_ID')[category].mean().sort_values(ascending=False)
+            top_players = player_stats.head(top_n).index.tolist()
+            
+            # Visualize each player
+            for player_id in top_players:
+                try:
+                    click.echo(f"  Visualizing {category} for player {player_id}...")
+                    visualizer.run_model_comparison(
+                        player_id, category, is_pitcher, output_dir
+                    )
+                except Exception as e:
+                    click.echo(f"  Error visualizing {category} for player {player_id}: {e}")
+    
+    click.echo(f"Visualizations saved to {output_dir}")
+
+
+@cli.command()
 @click.option('--load-models', is_flag=True, help='Load existing models instead of training new ones')
 @click.option('--models-dir', default='data/models', help='Directory containing saved models (when using --load-models)')
-def run_pipeline(load_models, models_dir):
+@click.option('--forecast-season', type=int, default=None, help='Season to forecast (default: most recent season + 1)')
+def run_pipeline(load_models, models_dir, forecast_season):
     """Run the complete fantasy baseball analysis pipeline"""
     click.echo("Running complete fantasy baseball analysis pipeline")
     
@@ -745,19 +893,47 @@ def run_pipeline(load_models, models_dir):
     click.echo("\n2. Analyzing statistics...")
     analyze_stats.callback('data/processed/batting_stats_all.csv', 'data/processed/pitching_stats_all.csv', 'data/analysis')
     
-    # Generate projections
-    click.echo("\n3. Generating projections...")
-    generate_projections.callback(
-        'data/processed/batting_stats_all.csv', 
-        'data/processed/pitching_stats_all.csv', 
+    # Train models or load existing ones
+    click.echo("\n3. Training models or loading existing ones...")
+    if load_models:
+        click.echo("Using existing models...")
+    else:
+        click.echo("Training new models...")
+        train_models.callback(
+            'data/processed/batting_stats_all.csv',
+            'data/processed/pitching_stats_all.csv',
+            'data/raw/biofile0.csv',
+            models_dir,
+            'ensemble',
+            8
+        )
+    
+    # Generate forecasts
+    click.echo("\n4. Generating forecasts...")
+    generate_forecasts.callback(
+        'data/processed/batting_stats_all.csv',
+        'data/processed/pitching_stats_all.csv',
+        'data/raw/biofile0.csv',
+        models_dir,
         'data/projections',
-        load_models,
-        models_dir
+        8,
+        forecast_season
     )
     
     # Rank players
-    click.echo("\n4. Ranking players...")
+    click.echo("\n5. Ranking players...")
     rank_players.callback('data/projections/batting_forecasts.csv', 'data/projections/pitching_forecasts.csv', None, 'data/rankings')
+    
+    # Visualize model performance
+    click.echo("\n6. Visualizing model performance...")
+    visualize_models.callback(
+        None, None, False, 'data/visualizations',
+        'data/processed/batting_stats_all.csv',
+        'data/processed/pitching_stats_all.csv',
+        'data/projections/batting_forecasts.csv',
+        'data/projections/pitching_forecasts.csv',
+        3, True
+    )
     
     click.echo("\nPipeline complete!")
 

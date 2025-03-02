@@ -613,7 +613,9 @@ def analyze_stats(batting_file, pitching_file, output_dir):
 @click.option('--batting-file', default='data/processed/batting_stats_all.csv', help='Path to batting statistics CSV')
 @click.option('--pitching-file', default='data/processed/pitching_stats_all.csv', help='Path to pitching statistics CSV')
 @click.option('--output-dir', default='data/projections', help='Directory to save projections')
-def generate_projections(batting_file, pitching_file, output_dir):
+@click.option('--load-models', is_flag=True, help='Load existing models instead of training new ones')
+@click.option('--models-dir', default='data/models', help='Directory containing saved models (when using --load-models)')
+def generate_projections(batting_file, pitching_file, output_dir, load_models, models_dir):
     """Generate player projections for the upcoming season"""
     click.echo("Generating player projections")
     
@@ -626,18 +628,29 @@ def generate_projections(batting_file, pitching_file, output_dir):
         click.echo(f"Error: Pitching statistics file not found: {pitching_file}")
         return
     
+    # Check if models directory exists when using --load-models
+    if load_models and not os.path.exists(models_dir):
+        click.echo(f"Error: Models directory not found: {models_dir}")
+        click.echo("Please train models first or specify a different models directory.")
+        return
+    
     # Initialize forecaster
-    forecaster = PlayerForecaster()
+    forecaster = PlayerForecaster(load_existing_models=load_models)
     
     # Load data
     forecaster.load_data(batting_file, pitching_file)
     
-    # Train models
-    click.echo("\nTraining batting models...")
-    forecaster.train_batting_models()
-    
-    click.echo("\nTraining pitching models...")
-    forecaster.train_pitching_models()
+    if load_models:
+        click.echo(f"\nLoading existing models from {models_dir}...")
+        if not forecaster.load_models(models_dir):
+            click.echo("Failed to load some models. Training may be required.")
+    else:
+        # Train models
+        click.echo("\nTraining batting models...")
+        forecaster.train_batting_models()
+        
+        click.echo("\nTraining pitching models...")
+        forecaster.train_pitching_models()
     
     # Generate forecasts
     click.echo("\nGenerating forecasts...")
@@ -718,7 +731,9 @@ def draft(rankings_file, teams, roster_size, output_dir):
 
 
 @cli.command()
-def run_pipeline():
+@click.option('--load-models', is_flag=True, help='Load existing models instead of training new ones')
+@click.option('--models-dir', default='data/models', help='Directory containing saved models (when using --load-models)')
+def run_pipeline(load_models, models_dir):
     """Run the complete fantasy baseball analysis pipeline"""
     click.echo("Running complete fantasy baseball analysis pipeline")
     
@@ -732,7 +747,13 @@ def run_pipeline():
     
     # Generate projections
     click.echo("\n3. Generating projections...")
-    generate_projections.callback('data/processed/batting_stats_all.csv', 'data/processed/pitching_stats_all.csv', 'data/projections')
+    generate_projections.callback(
+        'data/processed/batting_stats_all.csv', 
+        'data/processed/pitching_stats_all.csv', 
+        'data/projections',
+        load_models,
+        models_dir
+    )
     
     # Rank players
     click.echo("\n4. Ranking players...")

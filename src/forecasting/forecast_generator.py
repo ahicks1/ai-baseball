@@ -65,6 +65,10 @@ def generate_player_forecast(player_id, player_data, models, categories, bio_dat
         # Get the most recent season data (before the forecast season)
         recent_data = player_data.sort_values('SEASON', ascending=False).iloc[0]
     
+    # Check if the most recent season is the season immediately before the forecast season
+    if recent_data['SEASON'] != forecast_season - 1:
+        return None
+    
     # Check if player had non-zero data in the previous season
     has_non_zero_data = False
     if is_pitcher:
@@ -114,8 +118,23 @@ def generate_player_forecast(player_id, player_data, models, categories, bio_dat
     features['PRIME'] = 1 if 26 <= age <= 32 else 0
     features['DECLINE'] = 1 if age > 32 else 0
     
+    # Get player name from bio data if available
+    player_name = None
+    if bio_data is not None:
+        player_id_lower = player_id.lower()
+        player_bio = bio_data[bio_data['id'] == player_id_lower]
+        if not player_bio.empty:
+            player_name = player_bio.iloc[0]['fullname']
+    
     # Generate forecasts for each category
-    forecasts = {'PLAYER_ID': player_id}
+    forecasts = {
+        'PLAYER_ID': player_id,
+        'SEASON': forecast_season
+    }
+    
+    # Add player name if available
+    if player_name:
+        forecasts['PLAYER_NAME'] = player_name
     
     for category in categories:
         if category not in models:

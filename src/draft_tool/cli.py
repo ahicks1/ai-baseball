@@ -18,8 +18,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 
 from src.data_processing.process_retrosheet import process_multiple_seasons
 from src.analysis.stats_analyzer import StatsAnalyzer
-from src.forecasting import PlayerForecaster
 from src.ranking.player_ranker import PlayerRanker
+from src.forecasting.forecast_generator import generate_all_forecasts
+from src.forecasting.data_preparation import load_data, load_bio_data
+from src.forecasting.model_trainer import load_models, train_batting_models, train_pitching_models
 
 
 class DraftTool:
@@ -632,22 +634,26 @@ def train_models(batting_file, pitching_file, bio_file, models_dir, model_type, 
     # Create models directory if it doesn't exist
     os.makedirs(models_dir, exist_ok=True)
     
-    # Initialize forecaster
-    forecaster = PlayerForecaster()
-    
     # Load data
-    forecaster.load_data(batting_file, pitching_file)
+    batting_data, pitching_data = load_data(batting_file, pitching_file)
     
     # Load biographical data if file exists
-    if bio_file and os.path.exists(bio_file):
-        forecaster.load_bio_data(bio_file)
+    bio_file = load_bio_data(bio_file)
     
     # Train models
     click.echo("\nTraining batting models...")
-    forecaster.train_batting_models(model_type=model_type, n_jobs=n_jobs)
+    train_batting_models(
+        batting_data=batting_data,
+        model_type=model_type, 
+        bio_data=bio_file,
+        n_jobs=n_jobs)
     
     click.echo("\nTraining pitching models...")
-    forecaster.train_pitching_models(model_type=model_type, n_jobs=n_jobs)
+    train_pitching_models(
+        pitching_data=pitching_data,
+        model_type=model_type, 
+        bio_data=bio_file,
+        n_jobs=n_jobs)
     
     click.echo("\nModel training complete!")
     click.echo(f"Models saved to {models_dir}")
@@ -656,7 +662,7 @@ def train_models(batting_file, pitching_file, bio_file, models_dir, model_type, 
 @cli.command()
 @click.option('--batting-file', default='data/processed/batting_stats_all.csv', help='Path to batting statistics CSV')
 @click.option('--pitching-file', default='data/processed/pitching_stats_all.csv', help='Path to pitching statistics CSV')
-@click.option('--bio-file', default='data/raw/biofile0.csv', help='Path to player biographical data CSV (optional)')
+@click.option('--bio-file', default='data/raw/biofile0.csv', help='Path to player biographical data CSV')
 @click.option('--models-dir', default='data/models', help='Directory containing saved models')
 @click.option('--output-dir', default='data/projections', help='Directory to save projections')
 @click.option('--n-jobs', type=int, default=8, help='Number of parallel jobs to run')
@@ -684,24 +690,25 @@ def generate_forecasts(batting_file, pitching_file, bio_file, models_dir, output
     os.makedirs(output_dir, exist_ok=True)
     
     # Initialize forecaster with existing models
-    forecaster = PlayerForecaster(load_existing_models=True)
+    batting_models, pitching_models = load_models(models_dir=models_dir)
     
     # Load data
-    forecaster.load_data(batting_file, pitching_file)
+    batting_data, pitching_data = load_data(batting_file, pitching_file)
     
     # Load biographical data if file exists
-    if bio_file and os.path.exists(bio_file):
-        forecaster.load_bio_data(bio_file)
-    
-    # Load models
-    click.echo(f"\nLoading models from {models_dir}...")
-    if not forecaster.load_models(models_dir):
-        click.echo("Failed to load some models. Training may be required.")
-        return
+    bio_file = load_bio_data(bio_file)
     
     # Generate forecasts
     click.echo("\nGenerating forecasts...")
-    batting_forecasts, pitching_forecasts = forecaster.generate_all_forecasts(output_dir, n_jobs=n_jobs, forecast_season=forecast_season)
+    batting_forecasts, pitching_forecasts = generate_all_forecasts(
+        batting_data=batting_data,
+        pitching_data=pitching_data,
+        batting_models=batting_models,
+        pitching_models=pitching_models,
+        bio_data=bio_file,
+        output_dir=output_dir, 
+        n_jobs=n_jobs, 
+        forecast_season=forecast_season)
     
     click.echo("\nForecasting complete!")
     click.echo(f"Generated forecasts for {len(batting_forecasts)} batters and {len(pitching_forecasts)} pitchers")
@@ -743,8 +750,8 @@ def rank_players(batting_file, pitching_file, positions_file, output_dir):
     click.echo(f"Ranked {len(rankings)} players")
     
     # Display top 10 overall players
-    click.echo("\nTop 10 Overall Players:")
-    click.echo(tabulate(rankings.head(10)[['RANK', 'PLAYER_ID', 'PLAYER_TYPE', 'ADJ_VALUE']], 
+    click.echo("\nTop 20 Overall Players:")
+    click.echo(tabulate(rankings.head(20)[['RANK', 'PLAYER_ID', 'PLAYER_NAME', 'PLAYER_TYPE', 'ADJ_VALUE']], 
                        headers='keys', tablefmt='psql', showindex=False))
 
 

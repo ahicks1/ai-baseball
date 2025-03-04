@@ -11,26 +11,21 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 from joblib import Parallel, delayed
-import argparse
 
 from src.forecasting.data_preparation import (
     BATTING_CATEGORIES, 
     PITCHING_CATEGORIES,
-    load_bio_data,
-    load_data,
     prepare_player_data,
-    calculate_age
+    calculate_age,
+    compute_historical_averages
 )
 from src.forecasting.model_trainer import (
-    load_models,
-    train_batting_models,
-    train_pitching_models,
     forecast_arima,
     forecast_exponential_smoothing
 )
 
 
-def generate_player_forecast(player_id, player_data, models, categories, bio_data=None, is_pitcher=False, forecast_season=None):
+def generate_player_forecast(player_id, player_data, models, categories, bio_data, is_pitcher=False, forecast_season=None):
     """
     Generate forecast for a specific player.
     
@@ -39,7 +34,7 @@ def generate_player_forecast(player_id, player_data, models, categories, bio_dat
         player_data (pd.DataFrame): DataFrame with player's historical data
         models (dict): Dictionary of trained models
         categories (list): List of categories to forecast
-        bio_data (pd.DataFrame, optional): DataFrame with player biographical data
+        bio_data pd.DataFrame: DataFrame with player biographical data
         is_pitcher (bool): Whether the player is a pitcher
         forecast_season (int, optional): Season to forecast for. If None, uses most recent season + 1
         
@@ -97,7 +92,7 @@ def generate_player_forecast(player_id, player_data, models, categories, bio_dat
     if 'AGE' in recent_data:
         # If age is already in the data, increment it for next season
         age = recent_data['AGE'] + 1
-    elif bio_data is not None:
+    else:
         # If bio data is available, calculate age from birthdate
         player_id_lower = player_id.lower()
         player_bio = bio_data[bio_data['id'] == player_id_lower]
@@ -106,10 +101,15 @@ def generate_player_forecast(player_id, player_data, models, categories, bio_dat
             birthdate = player_bio.iloc[0]['birthdate']
             age = calculate_age(birthdate, forecast_season)
         else:
+            print("Encountered missing player bio", player_id)
             age = 28  # MLB average age for missing data
-    else:
-        # Default age if no bio data available
-        age = 28
+    
+    # Compute historical averages (3 and 5 seasons)
+    avg_features = compute_historical_averages(player_data)
+    
+    # Add historical averages to the feature set
+    for feat_name, feat_value in avg_features.items():
+        features[feat_name] = feat_value
     
     # Add age-related features
     features['AGE'] = age
@@ -120,11 +120,10 @@ def generate_player_forecast(player_id, player_data, models, categories, bio_dat
     
     # Get player name from bio data if available
     player_name = None
-    if bio_data is not None:
-        player_id_lower = player_id.lower()
-        player_bio = bio_data[bio_data['id'] == player_id_lower]
-        if not player_bio.empty:
-            player_name = player_bio.iloc[0]['fullname']
+    player_id_lower = player_id.lower()
+    player_bio = bio_data[bio_data['id'] == player_id_lower]
+    if not player_bio.empty:
+        player_name = player_bio.iloc[0]['fullname']
     
     # Generate forecasts for each category
     forecasts = {
@@ -264,7 +263,7 @@ def generate_player_forecast(player_id, player_data, models, categories, bio_dat
     return forecasts
 
 
-def _generate_player_forecast_wrapper(player_id, data, models, categories, bio_data=None, is_pitcher=False, forecast_season=None):
+def _generate_player_forecast_wrapper(player_id, data, models, categories, bio_data, is_pitcher=False, forecast_season=None):
     """
     Wrapper for generate_player_forecast to use with joblib.Parallel.
     
@@ -285,7 +284,7 @@ def _generate_player_forecast_wrapper(player_id, data, models, categories, bio_d
 
 
 def generate_all_forecasts(batting_data, pitching_data, batting_models, pitching_models, 
-                          bio_data=None, output_dir='data/projections', n_jobs=15, forecast_season=None):
+                          bio_data, output_dir='data/projections', n_jobs=15, forecast_season=None):
     """
     Generate forecasts for all players in parallel.
     
@@ -343,197 +342,3 @@ def generate_all_forecasts(batting_data, pitching_data, batting_models, pitching
     print(f"Forecasts saved to {output_dir}")
     
     return batting_df, pitching_df
-
-
-class PlayerForecaster:
-    """
-    Class for forecasting player performance for fantasy baseball.
-    """
-    
-    def __init__(self, batting_data=None, pitching_data=None, bio_data=None, load_existing_models=False):
-        """
-        Initialize the PlayerForecaster with batting and pitching data.
-        
-        Args:
-            batting_data (pd.DataFrame, optional): DataFrame with batting statistics
-            pitching_data (pd.DataFrame, optional): DataFrame with pitching statistics
-            bio_data (pd.DataFrame, optional): DataFrame with player biographical data
-            load_existing_models (bool, optional): Whether to load existing models from data/models
-        """
-        self.batting_data = batting_data
-        self.pitching_data = pitching_data
-        self.bio_data = bio_data
-        self.load_existing_models = load_existing_models
-        
-        # League settings for H2H categories
-        self.batting_categories = BATTING_CATEGORIES
-        self.pitching_categories = PITCHING_CATEGORIES
-        
-        # Models
-        self.batting_models = {}
-        self.pitching_models = {}
-        
-        # If load_existing_models is True, try to load models
-        if load_existing_models:
-            self.load_models()
-    
-    def load_bio_data(self, bio_file='data/raw/biofile0.csv'):
-        """
-        Load player biographical data from CSV file.
-        
-        Args:
-            bio_file (str): Path to biographical data CSV
-        """
-        self.bio_data = load_bio_data(bio_file)
-    
-    def load_data(self, batting_file, pitching_file):
-        """
-        Load batting and pitching data from CSV files.
-        
-        Args:
-            batting_file (str): Path to batting statistics CSV
-            pitching_file (str): Path to pitching statistics CSV
-        """
-        self.batting_data, self.pitching_data = load_data(batting_file, pitching_file)
-    
-    def load_models(self, models_dir='data/models'):
-        """
-        Load existing models from the specified directory.
-        
-        Args:
-            models_dir (str): Directory containing saved models
-            
-        Returns:
-            bool: True if models were loaded successfully, False otherwise
-        """
-        self.batting_models, self.pitching_models = load_models(
-            self.batting_categories, self.pitching_categories, models_dir
-        )
-        
-        return bool(self.batting_models) and bool(self.pitching_models)
-    
-    def train_batting_models(self, model_type='ensemble', n_jobs=8):
-        """
-        Train models for forecasting batting statistics in parallel.
-        
-        Args:
-            model_type (str): Type of model to train
-            n_jobs (int): Number of parallel jobs to run (default: 8)
-            
-        Returns:
-            dict: Dictionary of trained models
-        """
-        if self.batting_data is None:
-            raise ValueError("Batting data not loaded. Call load_data() first.")
-        
-        self.batting_models = train_batting_models(
-            self.batting_data, self.bio_data, model_type, n_jobs
-        )
-        
-        return self.batting_models
-    
-    def train_pitching_models(self, model_type='ensemble', n_jobs=8):
-        """
-        Train models for forecasting pitching statistics in parallel.
-        
-        Args:
-            model_type (str): Type of model to train
-            n_jobs (int): Number of parallel jobs to run (default: 8)
-            
-        Returns:
-            dict: Dictionary of trained models
-        """
-        if self.pitching_data is None:
-            raise ValueError("Pitching data not loaded. Call load_data() first.")
-        
-        self.pitching_models = train_pitching_models(
-            self.pitching_data, self.bio_data, model_type, n_jobs
-        )
-        
-        return self.pitching_models
-    
-    def generate_all_forecasts(self, output_dir='data/projections', n_jobs=15, forecast_season=None):
-        """
-        Generate forecasts for all players in parallel.
-        
-        Args:
-            output_dir (str): Directory to save forecasts
-            n_jobs (int): Number of parallel jobs to run (default: 15)
-            forecast_season (int, optional): Season to forecast for
-            
-        Returns:
-            tuple: (batting_forecasts, pitching_forecasts)
-        """
-        if self.batting_data is None or self.pitching_data is None:
-            raise ValueError("Data not loaded. Call load_data() first.")
-        
-        if not self.batting_models or not self.pitching_models:
-            if self.load_existing_models:
-                # Try to load models if not already loaded
-                if not self.load_models():
-                    raise ValueError("Failed to load existing models and no models are trained. "
-                                    "Call train_batting_models() and train_pitching_models() first.")
-            else:
-                raise ValueError("Models not trained. Call train_batting_models() and train_pitching_models() first.")
-        
-        return generate_all_forecasts(
-            self.batting_data, 
-            self.pitching_data, 
-            self.batting_models, 
-            self.pitching_models,
-            self.bio_data,
-            output_dir,
-            n_jobs,
-            forecast_season
-        )
-
-
-def main():
-    """
-    Main entry point for the forecasting module.
-    """
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Generate player performance forecasts')
-    parser.add_argument('--load-models', action='store_true', help='Load existing models instead of training new ones')
-    parser.add_argument('--models-dir', default='data/models', help='Directory containing saved models (when using --load-models)')
-    parser.add_argument('--n-jobs', type=int, default=20, help='Number of parallel jobs to run')
-    parser.add_argument('--forecast-season', type=int, help='Season to forecast (default: most recent season + 1)')
-    args = parser.parse_args()
-    
-    # Number of cores to use for parallel processing
-    n_jobs = args.n_jobs
-    
-    # Initialize forecaster
-    forecaster = PlayerForecaster(load_existing_models=args.load_models)
-    
-    # Load data
-    forecaster.load_bio_data(bio_file='data/raw/biofile0.csv')
-    
-    forecaster.load_data(
-        batting_file='data/processed/batting_stats_all.csv',
-        pitching_file='data/processed/pitching_stats_all.csv'
-    )
-    
-    if args.load_models:
-        print(f"\nLoading existing models from {args.models_dir}...")
-        if not forecaster.load_models(args.models_dir):
-            print("Failed to load some models. Training may be required.")
-    else:
-        # Train models with parallel processing
-        print("\nTraining batting models...")
-        forecaster.train_batting_models(n_jobs=n_jobs)
-        
-        print("\nTraining pitching models...")
-        forecaster.train_pitching_models(n_jobs=n_jobs)
-    
-    # Generate forecasts with parallel processing
-    print("\nGenerating forecasts...")
-    batting_forecasts, pitching_forecasts = forecaster.generate_all_forecasts(n_jobs=n_jobs, forecast_season=args.forecast_season)
-    
-    print("\nForecasting complete!")
-
-
-if __name__ == "__main__":
-    print("Player Performance Forecaster")
-    print("============================")
-    main()

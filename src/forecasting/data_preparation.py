@@ -69,9 +69,11 @@ def load_data(batting_file, pitching_file):
     """
     print(f"Loading batting data from {batting_file}")
     batting_data = pd.read_csv(batting_file)
+    batting_data = batting_data[batting_data['SEASON'] != 2020]
     
     print(f"Loading pitching data from {pitching_file}")
     pitching_data = pd.read_csv(pitching_file)
+    pitching_data = pitching_data[pitching_data['SEASON'] != 2020]
     
     print(f"Loaded {len(batting_data)} batting records and {len(pitching_data)} pitching records")
     return batting_data, pitching_data
@@ -98,7 +100,56 @@ def prepare_player_data(data, player_id, category, min_seasons=3):
     return player_data[category].values
 
 
-def prepare_regression_features(data, bio_data=None, player_id_col='PLAYER_ID', season_col='SEASON'):
+def compute_historical_averages(player_data, exclude_cols=None, season_col='SEASON'):
+    """
+    Compute historical averages of player statistics over the past 3 and 5 seasons.
+    
+    Args:
+        player_data (pd.DataFrame): DataFrame with player statistics sorted by season
+        exclude_cols (list, optional): Columns to exclude from averaging
+        season_col (str): Column name for season
+        
+    Returns:
+        dict: Dictionary with averaged features for past 3 and 5 seasons
+    """
+    if exclude_cols is None:
+        exclude_cols = ['PLAYER_ID', 'SEASON', 'TEAM', 'AGE', 'first', 'last']
+    
+    # Create a copy of the data sorted by season
+    player_data = player_data.sort_values(season_col)
+    
+    # Initialize the result dictionary
+    avg_features = {}
+    
+    # Get the most recent season
+    if len(player_data) == 0:
+        return avg_features
+    
+    # For each column that's not in exclude_cols
+    for col in player_data.columns:
+        if col not in exclude_cols and pd.api.types.is_numeric_dtype(player_data[col]):
+            # Calculate 3-season average
+            if len(player_data) >= 3:
+                avg_3 = player_data.iloc[-3:][col].mean()
+                avg_features[f'AVG3_{col}'] = avg_3
+            elif len(player_data) > 0:
+                # Use whatever data is available
+                avg_3 = player_data[col].mean()
+                avg_features[f'AVG3_{col}'] = avg_3
+            
+            # Calculate 5-season average
+            if len(player_data) >= 5:
+                avg_5 = player_data.iloc[-5:][col].mean()
+                avg_features[f'AVG5_{col}'] = avg_5
+            elif len(player_data) > 0:
+                # Use whatever data is available
+                avg_5 = player_data[col].mean()
+                avg_features[f'AVG5_{col}'] = avg_5
+    
+    return avg_features
+
+
+def prepare_regression_features(data: pd.DataFrame, bio_data, player_id_col='PLAYER_ID', season_col='SEASON'):
     """
     Prepare features for regression models.
     
@@ -117,19 +168,18 @@ def prepare_regression_features(data, bio_data=None, player_id_col='PLAYER_ID', 
     # Define columns to exclude from features (non-numeric columns)
     exclude_cols = ['TEAM', 'first', 'last']
     
-    # Add age data if bio_data is available
-    if bio_data is not None:
-        # Create a mapping of player_id to birthdate
-        player_birthdate = dict(zip(bio_data['id'], bio_data['birthdate']))
-        
-        # Calculate age for each player-season combination
-        df['AGE'] = df.apply(
-            lambda row: calculate_age(
-                player_birthdate.get(row[player_id_col].lower(), None), 
-                row[season_col]
-            ),
-            axis=1
-        )
+    # Create a mapping of player_id to birthdate
+    player_birthdate = dict(zip(bio_data['id'], bio_data['birthdate']))
+    
+    # Calculate age for each player-season combination
+    df['AGE'] = df.apply(
+        lambda row: calculate_age(
+            player_birthdate.get(row[player_id_col].lower(), None), 
+            row[season_col]
+        ),
+        axis=1
+    )
+
     
     # Create lagged features (previous season stats)
     players = df[player_id_col].unique()
@@ -160,6 +210,15 @@ def prepare_regression_features(data, bio_data=None, player_id_col='PLAYER_ID', 
             for col in player_data.columns:
                 if col not in [player_id_col, season_col, 'AGE'] and col not in exclude_cols:
                     row[f'PREV_{col}'] = prev_season[col]
+            
+            # Compute historical averages (3 and 5 seasons)
+            # Use data up to the previous season to avoid data leakage
+            historical_data = player_data.iloc[:i]
+            avg_features = compute_historical_averages(historical_data, exclude_cols=[player_id_col, season_col, 'AGE'] + exclude_cols)
+            
+            # Add historical averages to the feature set
+            for feat_name, feat_value in avg_features.items():
+                row[feat_name] = feat_value
             
             # Add age-related features
             age = row['AGE']

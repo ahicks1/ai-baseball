@@ -22,7 +22,11 @@ from tqdm import tqdm
 import warnings
 import contextlib
 
-from src.forecasting.data_preparation import BATTING_CATEGORIES, PITCHING_CATEGORIES
+from src.forecasting.data_preparation import (
+    BATTING_CATEGORIES, 
+    PITCHING_CATEGORIES,
+    compute_historical_averages
+)
 
 
 @contextlib.contextmanager
@@ -297,6 +301,10 @@ def train_category_model(category, regression_data, features_prefix='batting', m
     
     # Define features
     features = [col for col in regression_data.columns if col.startswith('PREV_')]
+    
+    # Add historical average features
+    avg_features = [col for col in regression_data.columns if col.startswith('AVG3_') or col.startswith('AVG5_')]
+    features.extend(avg_features)
     
     if 'AGE' in regression_data.columns:
         features.extend(['AGE', 'AGE_SQUARED', 'EARLY_CAREER', 'PRIME', 'DECLINE'])

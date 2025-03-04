@@ -580,8 +580,8 @@ if __name__ == "__main__":
     # Run ranking
     rankings = ranker.run_full_ranking()
     
-    # Display top 10 overall players
-    print("\nTop 10 Overall Players:")
-    print(rankings.head(10)[['RANK', 'PLAYER_ID', 'PLAYER_TYPE', 'ADJ_VALUE']])
+    # Display top 20 overall players
+    print("\nTop 20 Overall Players:")
+    print(rankings.head(20)[['RANK', 'PLAYER_ID', 'PLAYER_NAME', 'PLAYER_TYPE', 'ADJ_VALUE']])
     
     print("\nRanking complete!")

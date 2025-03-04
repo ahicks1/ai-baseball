@@ -271,10 +271,10 @@ def aggregate_batting_stats(batting_df: pd.DataFrame, players_df: Optional[pd.Da
         batting_df = batting_df[batting_df['date'].dt.year == season]
     
     # Only include rows where stattype is 'value'
-    batting_df = batting_df[batting_df['stattype'] == 'value']
+    batting_df = batting_df[(batting_df['stattype'] == 'value') & (batting_df['gametype'] == 'regular')]
     
     # Group by player ID and team
-    grouped = batting_df.groupby(['id', 'team'])
+    grouped = batting_df.groupby(['id'])
     
     # Aggregate statistics
     batting_stats = grouped.agg({
@@ -295,6 +295,7 @@ def aggregate_batting_stats(batting_df: pd.DataFrame, players_df: Optional[pd.Da
         'b_sb': 'sum',
         'b_cs': 'sum',
         'b_gdp': 'sum',
+        'team': lambda x: '-'.join(set(x)),
         'gid': 'count'  # Count of games
     }).reset_index()
     
@@ -410,10 +411,10 @@ def aggregate_pitching_stats(pitching_df: pd.DataFrame, players_df: Optional[pd.
         pitching_df = pitching_df[pitching_df['date'].dt.year == season]
     
     # Only include rows where stattype is 'value'
-    pitching_df = pitching_df[pitching_df['stattype'] == 'value']
+    pitching_df = pitching_df[(pitching_df['stattype'] == 'value') & (pitching_df['gametype'] == 'regular')]
     
     # Group by player ID and team
-    grouped = pitching_df.groupby(['id', 'team'])
+    grouped = pitching_df.groupby(['id'])
     
     # Aggregate statistics
     pitching_stats = grouped.agg({
@@ -437,6 +438,7 @@ def aggregate_pitching_stats(pitching_df: pd.DataFrame, players_df: Optional[pd.
         'wp': 'sum',
         'lp': 'sum',
         'save': 'sum',
+        'team': lambda x: '-'.join(set(x)),
         'gid': 'count'  # Count of games
     }).reset_index()
     

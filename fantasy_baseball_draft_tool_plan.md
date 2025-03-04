@@ -38,7 +38,7 @@ graph TD
 ## 1. Data Collection & Processing
 
 ### Retrosheet Data Handling
-- Parse Retrosheet play-by-play event files (.EVN, .EVA files)
+- Parse Retrosheet play-by-play event files (Processes files)
 - Process game logs and roster files
 - Handle the specific format of Retrosheet data (fixed width and/or CSV)
 

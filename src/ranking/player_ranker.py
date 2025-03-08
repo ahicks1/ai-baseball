@@ -191,45 +191,96 @@ class PlayerRanker:
         Returns:
             pd.DataFrame: DataFrame with positional adjustments
         """
-        # This is a placeholder implementation
-        # In a real implementation, we would calculate positional adjustments
-        # based on the scarcity of each position
-        
         # Create a copy of the data
         df = data.copy()
         
-        # Define position scarcity adjustments
-        # These are arbitrary values for demonstration
-        position_adjustments = {
-            'C': 1.5,    # Catchers are scarce
-            '1B': 0.8,   # First basemen are abundant
-            '2B': 1.2,   # Second basemen are somewhat scarce
-            '3B': 1.0,   # Third basemen are average
-            'SS': 1.3,   # Shortstops are scarce
-            'OF': 0.9,   # Outfielders are abundant
-            'DH': 0.7,   # Designated hitters are very abundant
-            'SP': 1.0,   # Starting pitchers are average
-            'RP': 1.2    # Relief pitchers are somewhat scarce
+        # Define league settings
+        num_teams = 12
+        roster_spots = {
+            'C': 1 * num_teams,    # 1 catcher per team
+            '1B': 1 * num_teams,   # 1 first baseman per team
+            '2B': 1 * num_teams,   # 1 second baseman per team
+            '3B': 1 * num_teams,   # 1 third baseman per team
+            'SS': 1 * num_teams,   # 1 shortstop per team
+            'OF': 3 * num_teams,   # 3 outfielders per team
+            'P': 8 * num_teams,    # 8 pitchers per team
+            # Utility spots can be filled by any position player
         }
         
-        # Apply positional adjustments
-        if position_col in df.columns:
-            # Initialize positional adjustment column
-            df['POS_ADJ'] = 1.0
-            
-            # Apply adjustments based on positions
-            for idx, row in df.iterrows():
-                positions = str(row[position_col]).split(',')
-                
-                # Get the maximum adjustment for the player's positions
-                max_adj = max([position_adjustments.get(pos.strip(), 1.0) for pos in positions])
-                df.at[idx, 'POS_ADJ'] = max_adj
-            
-            # Apply the adjustment to the total value
-            df['ADJ_VALUE'] = df['TOTAL_VALUE'] * df['POS_ADJ']
-        else:
+        # Check if position data is available
+        if position_col not in df.columns:
             # If no position data, just copy the total value
             df['ADJ_VALUE'] = df['TOTAL_VALUE']
+            df['POS_ADJ'] = 1.0
+            return df
+        
+        # Calculate position scarcity
+        position_values = {}
+        position_replacement_values = {}
+        
+        # Process each position
+        for position in roster_spots.keys():
+            # Filter players eligible for this position
+            pos_players = df[df[position_col].str.contains(position, na=False)].copy()
+            
+            if len(pos_players) > 0:
+                # Sort by total value
+                pos_players = pos_players.sort_values('TOTAL_VALUE', ascending=False)
+                
+                # Get the number of players needed at this position
+                num_needed = roster_spots.get(position, 0)
+                
+                if num_needed > 0 and len(pos_players) >= num_needed:
+                    # Calculate average value of top N players
+                    top_n_avg = pos_players.iloc[:num_needed]['TOTAL_VALUE'].mean()
+                    
+                    # Calculate replacement level (value of the N+1 player)
+                    if len(pos_players) > num_needed:
+                        replacement_value = pos_players.iloc[num_needed]['TOTAL_VALUE']
+                    else:
+                        replacement_value = pos_players.iloc[-1]['TOTAL_VALUE']
+                    
+                    # Calculate relative value drop-off (as a percentage)
+                    # This better captures scarcity by measuring how much better the top N players are
+                    # compared to the replacement level player
+                    if replacement_value > 0:
+                        value_dropoff = (top_n_avg - replacement_value) / replacement_value
+                    else:
+                        # Handle case where replacement value is zero or negative
+                        value_dropoff = top_n_avg - replacement_value
+                    
+                    # Store values for normalization
+                    position_values[position] = top_n_avg
+                    position_replacement_values[position] = value_dropoff
+        
+        # Normalize to create adjustment factors
+        # Use the average drop-off as the baseline (1.0)
+        avg_dropoff = np.mean(list(position_replacement_values.values()))
+        
+        position_adjustments = {}
+        for position, dropoff in position_replacement_values.items():
+            # Normalize around 1.0
+            # Positions with greater scarcity will have multipliers > 1.0
+            # Positions with less scarcity will have multipliers < 1.0
+            position_adjustments[position] = dropoff / avg_dropoff
+        
+        # Add a default adjustment for positions not in our list
+        position_adjustments['DH'] = 0.7  # Designated hitters are very abundant
+        
+        # Apply positional adjustments
+        # Initialize positional adjustment column
+        df['POS_ADJ'] = 1.0
+        
+        # Apply adjustments based on positions
+        for idx, row in df.iterrows():
+            positions = str(row[position_col]).split('-')
+            
+            # Get the maximum adjustment for the player's positions
+            max_adj = max([position_adjustments.get(pos.strip(), 1.0) for pos in positions])
+            df.at[idx, 'POS_ADJ'] = max_adj
+        
+        # Apply the adjustment to the total value
+        df['ADJ_VALUE'] = df['TOTAL_VALUE'] * df['POS_ADJ']
         
         return df
     
@@ -455,7 +506,7 @@ class PlayerRanker:
             raise ValueError("Position data not available. Call load_player_positions() first.")
         
         # Define common positions
-        positions = ['C', '1B', '2B', '3B', 'SS', 'OF', 'SP', 'RP']
+        positions = ['C', '1B', '2B', '3B', 'SS', 'OF', 'P', 'DH']
         
         # Calculate average value for top 10 players at each position
         position_values = []

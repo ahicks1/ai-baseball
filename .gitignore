@@ -83,8 +83,9 @@ venv.bak/
 # Project specific
 data/raw/
 data/processed/
-data/projections/
+data/rankings_with_scarcity/
 data/rankings/
+data/backtests/
 data/analysis/
 data/draft/
 data/models/

@@ -749,7 +749,7 @@ def rank_players(batting_file, pitching_file, positions_file, output_dir):
     click.echo("\nRanking complete!")
     click.echo(f"Ranked {len(rankings)} players")
     
-    # Display top 10 overall players
+    # Display top 20 overall players
     click.echo("\nTop 20 Overall Players:")
     click.echo(tabulate(rankings.head(20)[['RANK', 'PLAYER_ID', 'PLAYER_NAME', 'PLAYER_TYPE', 'ADJ_VALUE']], 
                        headers='keys', tablefmt='psql', showindex=False))
